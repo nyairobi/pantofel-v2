@@ -3,16 +3,18 @@
  * get information about a song
  */
 
-import type { AutocompleteInteraction, ChatInputCommandInteraction, Client, SlashCommandBuilder } from 'discord.js';
+import { AttachmentBuilder, AutocompleteInteraction, ChatInputCommandInteraction, Client, SlashCommandBuilder } from 'discord.js';
 import { CommandHandler } from '../command';
 import { CommandExecutor } from '../executor';
 import { Autowired } from '../service';
 import { DatabaseService } from '../services/database';
 import { PlaylistService } from '../services/playlist';
 import { Util } from '../util';
+import config from '../config.json';
+import type { Song } from '@prisma/client';
 
 @CommandHandler ()
-class SongInfoCommand extends CommandExecutor {
+class SonginfoCommand extends CommandExecutor {
     @Autowired ()
     private m_databaseService! : DatabaseService;
 
@@ -34,7 +36,7 @@ class SongInfoCommand extends CommandExecutor {
     }
 
     public async command (client : Client, interaction : ChatInputCommandInteraction) : Promise<void> {
-        const songId = interaction.options.getNumber ('song');
+        const songId = interaction.options.getNumber ('song') ;
         
         if (songId !== null) {
             const song = await this.m_databaseService.song.findUnique ({
@@ -44,7 +46,8 @@ class SongInfoCommand extends CommandExecutor {
             });
             if (song !== null) {
                 const { embed, files } = Util.songEmbed (song);
-                await interaction.reply ({ embeds : [embed], files })
+                await interaction.reply ({ embeds : [embed], files });
+                await interaction.followUp ({ files: [this.songEmbed (song)]});
             } else {
                 await interaction.reply ({ content : 'This song does not exist in the database.', ephemeral : true });
             }
@@ -53,6 +56,7 @@ class SongInfoCommand extends CommandExecutor {
             if (song !== null) {
                 const { embed, files } = Util.songEmbed (song);
                 await interaction.reply ({ embeds : [embed], files } )
+                await interaction.followUp ({ files: [this.songEmbed (song)]});
             } else {
                 await interaction.reply ({ content : 'No song is currently being played', ephemeral : true });
             }
@@ -62,26 +66,8 @@ class SongInfoCommand extends CommandExecutor {
     public async autocomplete (client : Client, interaction : AutocompleteInteraction) : Promise<void> {
         const input = interaction.options.getFocused ();
 
-        if (input.length > 3) {
-            const songs = await this.m_databaseService.song.findMany ({
-                where : {
-                    OR : [{
-                        title : {
-                            contains : input
-                        }
-                    }, {
-                        artist : {
-                            contains : input
-                        }
-                    }]
-                },
-                select : {
-                    songId : true,
-                    artist : true,
-                    title : true
-                },
-                orderBy : [{ artist : 'asc' }, { title : 'asc' }]
-            });
+        if (input.length > 1) {
+            const songs = await this.m_databaseService.findSong (input);
 
             await interaction.respond (songs.map (song => { 
                 return { 
@@ -92,5 +78,11 @@ class SongInfoCommand extends CommandExecutor {
         } else {
             await interaction.respond ([]);
         }
+    }
+
+    private songEmbed (song : Song) : AttachmentBuilder {
+        const res = new AttachmentBuilder (`${config.storage.musicDirectory}/${song.songId}.opus`);
+        res.setName (`${song.artist} - ${song.title}.ogg`);
+        return res;
     }
 }

@@ -3,7 +3,7 @@
  * upload a song
  */
 
-import type { ChatInputCommandInteraction, Client, SlashCommandBuilder } from 'discord.js';
+import { ButtonComponent, ButtonInteraction, ButtonStyle, CacheType, ChatInputCommandInteraction, Client, ComponentType, SlashCommandBuilder } from 'discord.js';
 import { CommandHandler } from '../command';
 import { CommandExecutor } from '../executor';
 import { Autowired } from '../service';
@@ -14,6 +14,7 @@ import fs from 'fs';
 import ffmpeg from 'fluent-ffmpeg';
 import { Util } from '../util';
 import sharp from 'sharp';
+import { ActionRowBuilder, ButtonBuilder } from '@discordjs/builders';
 
 @CommandHandler ()
 class UploadCommand extends CommandExecutor {
@@ -96,12 +97,71 @@ class UploadCommand extends CommandExecutor {
         }
     }
 
+    public async handlePotentialDuplicate (interaction : ChatInputCommandInteraction, title : string) : Promise<boolean>  {
+        const songs = await this.m_databaseService.findSong (title, {
+            titleOnly : true,
+            threshold : 0.1
+        });
+        if (songs.length > 0) {
+            const [song] = songs;
+
+            const row = new ActionRowBuilder<ButtonBuilder> ()
+                .addComponents (
+                    new ButtonBuilder ()
+                        .setCustomId ('upload')
+                        .setLabel ('Upload')
+                        .setStyle (ButtonStyle.Success),
+                    new ButtonBuilder ()
+                        .setCustomId ('cancel')
+                        .setLabel ('Cancel')
+                        .setStyle (ButtonStyle.Danger)
+                );
+
+            const message = await interaction.editReply({ 
+                content: `This song is a potential duplicate of ${song.artist} — ${song.title}`, 
+                components: [row]
+            });
+
+            try {
+                const result = await message.awaitMessageComponent ({ 
+                    filter: () => { return true } , 
+                    componentType: ComponentType.Button, 
+                    time: 60000 
+                });
+                if (result.customId === 'upload') {
+                    await result.update ({
+                        content : 'Uploading',
+                        components : []
+                    })
+                    return true;
+                } else {
+                    await result.update ({
+                        content : 'Upload cancelled',
+                        components : []
+                    })
+                    return false;
+                }
+            } catch (error) {
+                await interaction.editReply ({
+                    content : 'Upload failed',
+                    components : []
+                });
+                return false;
+            }
+        }
+        return true;
+    }
+
     public async uploadLocal (interaction : ChatInputCommandInteraction) : Promise<void> {
         const file = interaction.options.getAttachment ('file', true);
         const artist = interaction.options.getString ('artist', true);
         const title = interaction.options.getString ('title', true);
         const coverArt = interaction.options.getAttachment ('cover-art');
         const userId = interaction.user.id;
+
+        if (!await this.handlePotentialDuplicate (interaction, title)) {
+            return;
+        }
 
         const songEntry = await this.m_databaseService.song.create ({
             data : {
@@ -121,11 +181,15 @@ class UploadCommand extends CommandExecutor {
                         songId : songEntry.songId
                     }
                 })
-                await interaction.editReply ('Upload failed');
+                await interaction.editReply ({ 
+                    content : 'Upload failed',
+                });
             })
             .on ('end', async () => {
                 this.m_playlistService.addSong (songEntry.songId);
-                await interaction.editReply ('Upload successful');
+                await interaction.editReply ({ 
+                    content : 'Upload successful',
+                });
             })
             .input (file.url)
             .audioBitrate ('128k')
@@ -154,6 +218,10 @@ class UploadCommand extends CommandExecutor {
             await interaction.editReply ({
                 content : 'Only Youtube Music uploads are supported',
             });
+            return;
+        }
+
+        if (!await this.handlePotentialDuplicate (interaction, title)) {
             return;
         }
 

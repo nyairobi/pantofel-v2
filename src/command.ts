@@ -88,6 +88,12 @@ export class CommandManager extends Logging {
 
     public async handleButton (client : Client, interaction : ButtonInteraction) {
         const buttonId = interaction.customId;
+
+        if (buttonId.indexOf (':') < 0) {
+            // This button is handled by a local collector
+            return;
+        }
+
         const [ commandId, route ] = buttonId.split (':');
 
         const command : CommandExecutor | undefined = this.m_commands.get (commandId);
